@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+  <meta charset="UTF-8">
+  <title>每月假期記錄 (EA / AL)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 900px; margin: 0 auto; padding: 16px; }
+    h1 { font-size: 20px; }
+    label { margin-right: 8px; }
+    input, select, button { padding: 6px 8px; margin: 4px 0; }
+    button { cursor: pointer; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+    th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; font-size: 13px; }
+    th { background: #f4f4f4; }
+    .totals { margin-top: 16px; }
+    .totals table td.label { width: 140px; background: #f9f9f9; }
+    .highlight { font-weight: bold; background: #e8f6ff; }
+    .over-limit { color: red; font-weight: bold; }
+    .small { font-size: 12px; color: #666; }
+  </style>
+</head>
+<body>
+  <h1>每月假期記錄 (EA 每月最多 4 日)</h1>
+  <p class="small">
+    類型分為：EA（每月最多 4 日）、AL（無上限）。輸入每次放假日期及類型，系統會自動計算本月及本年總數。
+  </p>
+
+  <!-- 輸入區 -->
+  <div>
+    <label>
+      日期：
+      <input type="date" id="leaveDate">
+    </label>
+    <label>
+      類型：
+      <select id="leaveType">
+        <option value="EA">EA</option>
+        <option value="AL">AL</option>
+      </select>
+    </label>
+    <label>
+      天數：
+      <input type="number" id="leaveDays" value="1" min="0.5" step="0.5" style="width:60px;">
+    </label>
+    <label>
+      備註：
+      <input type="text" id="leaveNote" style="width:200px;">
+    </label>
+    <button onclick="addLeave()">新增記錄</button>
+    <button onclick="clearAll()">清除全部記錄</button>
+  </div>
+
+  <!-- 記錄列表 -->
+  <h2>假期記錄列表</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>日期</th>
+        <th>類型</th>
+        <th>天數</th>
+        <th>備註</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody id="recordsBody"></tbody>
+  </table>
+
+  <!-- 統計 -->
+  <div class="totals">
+    <h2>統計（按系統當前年月）</h2>
+    <table>
+      <tr class="highlight">
+        <td class="label">本月 EA</td>
+        <td id="monthEA">0</td>
+      </tr>
+      <tr>
+        <td class="label">本月 AL</td>
+        <td id="monthAL">0</td>
+      </tr>
+      <tr>
+        <td class="label">本月總假期</td>
+        <td id="monthTotal">0</td>
+      </tr>
+      <tr class="highlight">
+        <td class="label">本年 EA</td>
+        <td id="yearEA">0</td>
+      </tr>
+      <tr>
+        <td class="label">本年 AL</td>
+        <td id="yearAL">0</td>
+      </tr>
+      <tr>
+        <td class="label">本年總假期</td>
+        <td id="yearTotal">0</td>
+      </tr>
+    </table>
+    <p class="small">
+      提示：如果本月 EA 超過 4 日，數字會以紅色顯示作提醒。
+    </p>
+  </div>
+
+  <script>
+    // 所有記錄存放於此陣列
+    let leaves = [];
+
+    const STORAGE_KEY = 'leave_tracker_ea_al';
+
+    // 從 localStorage 載入
+    function loadData() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          leaves = JSON.parse(raw) || [];
+        } else {
+          leaves = [];
+        }
+      } catch (e) {
+        leaves = [];
+      }
+    }
+
+    // 儲存至 localStorage
+    function saveData() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(leaves));
+    }
+
+    // 新增一條記錄
+    function addLeave() {
+      const dateInput = document.getElementById('leaveDate');
+      const typeInput = document.getElementById('leaveType');
+      const daysInput = document.getElementById('leaveDays');
+      const noteInput = document.getElementById('leaveNote');
+
+      const date = dateInput.value;
+      const type = typeInput.value;
+      const days = parseFloat(daysInput.value || '0');
+      const note = noteInput.value.trim();
+
+      if (!date) {
+        alert('請先選擇日期');
+        return;
+      }
+      if (!days || days <= 0) {
+        alert('天數必須大於 0');
+        return;
+      }
+
+      leaves.push({
+        id: Date.now(),      // 簡單唯一 ID
+        date: date,          // 'YYYY-MM-DD'
+        type: type,          // 'EA' 或 'AL'
+        days: days,          // 數字，可半日
+        note: note
+      });
+
+      saveData();
+      renderTable();
+      updateStats();
+
+      // 重置輸入
+      // date 保留今日方便連續輸入
+      daysInput.value = '1';
+      noteInput.value = '';
+    }
+
+    // 刪除某一條記錄
+    function deleteLeave(id) {
+      if (!confirm('確定刪除此記錄？')) return;
+      leaves = leaves.filter(item => item.id !== id);
+      saveData();
+      renderTable();
+      updateStats();
+    }
+
+    // 渲染表格
+    function renderTable() {
+      const tbody = document.getElementById('recordsBody');
+      tbody.innerHTML = '';
+
+      // 按日期排序（由早到晚）
+      const sorted = [...leaves].sort((a, b) => a.date.localeCompare(b.date));
+
+      sorted.forEach((item, index) => {
+        const tr = document.createElement('tr');
+
+        const tdIndex = document.createElement('td');
+        tdIndex.textContent = index + 1;
+
+        const tdDate = document.createElement('td');
+        tdDate.textContent = item.date;
+
+        const tdType = document.createElement('td');
+        tdType.textContent = item.type;
+
+        const tdDays = document.createElement('td');
+        tdDays.textContent = item.days;
+
+        const tdNote = document.createElement('td');
+        tdNote.textContent = item.note || '';
+
+        const tdAction = document.createElement('td');
+        const btn = document.createElement('button');
+        btn.textContent = '刪除';
+        btn.onclick = () => deleteLeave(item.id);
+        tdAction.appendChild(btn);
+
+        tr.appendChild(tdIndex);
+        tr.appendChild(tdDate);
+        tr.appendChild(tdType);
+        tr.appendChild(tdDays);
+        tr.appendChild(tdNote);
+        tr.appendChild(tdAction);
+
+        tbody.appendChild(tr);
+      });
+    }
+
+    // 更新每月及每年統計
+    function updateStats() {
+      const now = new Date();
+      const currentYear = now.getFullYear();
+      const currentMonth = now.getMonth() + 1; // 1-12
+
+      let monthEA = 0;
+      let monthAL = 0;
+      let yearEA = 0;
+      let yearAL = 0;
+
+      leaves.forEach(item => {
+        const d = new Date(item.date);
+        if (isNaN(d.getTime())) return;
+
+        const y = d.getFullYear();
+        const m = d.getMonth() + 1;
+
+        // 年統計
+        if (y === currentYear) {
+          if (item.type === 'EA') {
+            yearEA += item.days;
+          } else if (item.type === 'AL') {
+            yearAL += item.days;
+          }
+        }
+
+        // 月統計
+        if (y === currentYear && m === currentMonth) {
+          if (item.type === 'EA') {
+            monthEA += item.days;
+          } else if (item.type === 'AL') {
+            monthAL += item.days;
+          }
+        }
+      });
+
+      const monthTotal = monthEA + monthAL;
+      const yearTotal = yearEA + yearAL;
+
+      const monthEAEl = document.getElementById('monthEA');
+      document.getElementById('monthEA').textContent = monthEA;
+      document.getElementById('monthAL').textContent = monthAL;
+      document.getElementById('monthTotal').textContent = monthTotal;
+
+      document.getElementById('yearEA').textContent = yearEA;
+      document.getElementById('yearAL').textContent = yearAL;
+      document.getElementById('yearTotal').textContent = yearTotal;
+
+      // 每月 EA > 4 顯示紅色提示
+      if (monthEA > 4) {
+        monthEAEl.classList.add('over-limit');
+      } else {
+        monthEAEl.classList.remove('over-limit');
+      }
+    }
+
+    // 清除全部
+    function clearAll() {
+      if (!confirm('確定清除全部記錄？')) return;
+      leaves = [];
+      saveData();
+      renderTable();
+      updateStats();
+    }
+
+    // 初始化
+    function init() {
+      loadData();
+      renderTable();
+      updateStats();
+
+      // 預設日期為今日
+      const dateInput = document.getElementById('leaveDate');
+      const today = new Date();
+      const yyyy = today.getFullYear();
+      const mm = String(today.getMonth() + 1).padStart(2, '0');
+      const dd = String(today.getDate()).padStart(2, '0');
+      dateInput.value = `${yyyy}-${mm}-${dd}`;
+    }
+
+    window.onload = init;
+  </script>
+</body>
+</html>
